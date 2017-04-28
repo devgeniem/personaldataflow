@@ -4,7 +4,7 @@
 
   <groupId>fi.geniem.gdpr</groupId>
   <artifactId>personaldataflow</artifactId>
-  <version>0.0.1-SNAPSHOT3</version>
+  <version>0.0.1-SNAPSHOT5</version>
   <packaging>jar</packaging>
   <name>personaldataflow</name>
   <url>http://maven.apache.org</url>

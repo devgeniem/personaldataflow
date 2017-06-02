@@ -6,7 +6,6 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 @Retention(RetentionPolicy.CLASS)
-@Target({ ElementType.CONSTRUCTOR, ElementType.METHOD, ElementType.TYPE})
-public @interface PersonalDataHandler {
-
+@Target({ElementType.METHOD})
+public @interface PersonalDataEndpoint {
 }

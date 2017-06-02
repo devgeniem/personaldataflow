@@ -4,7 +4,7 @@
 
   <groupId>fi.geniem.gdpr</groupId>
   <artifactId>personaldataflow</artifactId>
-  <version>0.0.1-SNAPSHOT5</version>
+  <version>0.0.1-SNAPSHOT3</version>
   <packaging>jar</packaging>
   <name>personaldataflow</name>
   <url>http://maven.apache.org</url>
@@ -20,6 +20,13 @@
       <version>3.8.1</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+	  <groupId>jdk.tools</groupId>
+	  <artifactId>jdk.tools</artifactId>
+      <version>jdk1.8.0</version>
+	  <scope>system</scope>
+	  <systemPath>${JAVA_HOME}/lib/tools.jar</systemPath>
+	</dependency>
   </dependencies>
     <build>
     <plugins>

@@ -77,7 +77,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
             		Element parent = element.getEnclosingElement();
             		if(isPersonalData(element) && !isSafeContainer(parent)){
 	                    trees.printMessage(Kind.WARNING, 
-	                    		"Unsafe personal data: " + element.getSimpleName(), 
+	                    		"Unsafe personal data: " + element.getSimpleName(),
 	                    		(JCTree) variable, taskEvt.getCompilationUnit());
             		}
             		return super.visitVariable(variable, v);

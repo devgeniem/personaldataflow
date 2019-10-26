@@ -173,25 +173,28 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                     return null;
                                 }
                                 TypeMirror tp = Trees.instance(processingEnv).getTypeMirror(path);
-                                switch (tp.getKind()){
-                                    case ARRAY: {
-                                        ArrayType at = (ArrayType) tp;
-                                        Element array = processingEnv.getTypeUtils().asElement(at.getComponentType());
-                                        if(isPersonalData(array) && !isSafeContainer(method) && !isEndpoint(method)){
-                                            warn("Unsafe @PersonalData: " + argumentEle, identifierTree);
-                                        }
-                                        break;
-                                    }
-                                    case DECLARED:{
-                                        DeclaredType dt = (DeclaredType) tp;
-                                        for(TypeMirror mirror : dt.getTypeArguments()){
-                                            Element argumentType = processingEnv.getTypeUtils().asElement(mirror);
-                                            if(isPersonalData(argumentType) && !isSafeContainer(method) && !isEndpoint(method)){
+                                if (tp != null) {
+                                    switch (tp.getKind()) {
+                                        case ARRAY: {
+                                            ArrayType at = (ArrayType) tp;
+                                            Element array = processingEnv.getTypeUtils().asElement(at.getComponentType());
+                                            if (isPersonalData(array) && !isSafeContainer(method) && !isEndpoint(method)) {
                                                 warn("Unsafe @PersonalData: " + argumentEle, identifierTree);
                                             }
+                                            break;
                                         }
+                                        case DECLARED: {
+                                            DeclaredType dt = (DeclaredType) tp;
+                                            for (TypeMirror mirror : dt.getTypeArguments()) {
+                                                Element argumentType = processingEnv.getTypeUtils().asElement(mirror);
+                                                if (isPersonalData(argumentType) && !isSafeContainer(method) && !isEndpoint(method)) {
+                                                    warn("Unsafe @PersonalData: " + argumentEle, identifierTree);
+                                                }
+                                            }
+                                        }
+                                        default:
+                                            break;
                                     }
-                                    default: break;
                                 }
                                 return super.visitIdentifier(identifierTree, aVoid);
                             }
@@ -321,6 +324,9 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
     }
 
     private static Element treeToElement(Tree tree){
+	    if (tree == null) {
+	        return null;
+        }
         return TreeInfo.symbolFor((JCTree) tree);
     }
 

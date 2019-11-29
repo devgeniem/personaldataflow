@@ -21,40 +21,44 @@ import javax.tools.Diagnostic.Kind;
 import javax.tools.FileObject;
 import javax.tools.StandardLocation;
 import javax.tools.ToolProvider;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.OutputStream;
-import java.io.PrintWriter;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.FileAttribute;
 import java.security.MessageDigest;
 import java.util.*;
 
 @SupportedAnnotationTypes({"*",})
-public class PersonalDataMetricsProcessor extends AbstractProcessor implements TaskListener{
-		
-	private Trees trees;
-	private TaskEvent taskEvt;
-	private Messager messager;
+public class PersonalDataMetricsProcessor extends AbstractProcessor implements TaskListener {
+
+    private Trees trees;
+    private TaskEvent taskEvt;
+    private Messager messager;
 
     private Map<String, Set<String>> methodDependencies;
     private Map<String, Set<String>> methodPersonalData;
 
+    private Set<WaitList> waitLists;
+
+
     @Override
-	public synchronized void init(ProcessingEnvironment processingEnv) {
-		super.init(processingEnv);
-		trees = Trees.instance(processingEnv);
-		messager = processingEnv.getMessager();
-	    JavacTask.instance(processingEnv).setTaskListener(this);
+    public synchronized void init(ProcessingEnvironment processingEnv) {
+        super.init(processingEnv);
+        trees = Trees.instance(processingEnv);
+        messager = processingEnv.getMessager();
+        JavacTask.instance(processingEnv).setTaskListener(this);
         methodDependencies = new HashMap<>();
         methodPersonalData = new HashMap<>();
+        waitLists = new HashSet<>();
     }
-	
+
     @Override
     public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
         return false;
     }
 
-    private boolean isPersonalData(Element field){
+    private boolean isPersonalData(Element field) {
         return hasPersonalDataAnnotation(field) || isFieldTypePersonalData(field);
     }
 
@@ -62,23 +66,23 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         return hasEntityAnnotation(field) || isFieldTypeEntity(field);
     }
 
-    private boolean isFieldTypePersonalData(Element field){
-    	if(field == null){
-    		return false;
-    	}
+    private boolean isFieldTypePersonalData(Element field) {
+        if (field == null) {
+            return false;
+        }
 
-    	Element type = processingEnv.getTypeUtils().asElement(field.asType());
+        Element type = processingEnv.getTypeUtils().asElement(field.asType());
 
-    	if (type == null || !TypeElement.class.isAssignableFrom(type.getClass())) {
-    	    return false;
+        if (type == null || !TypeElement.class.isAssignableFrom(type.getClass())) {
+            return false;
         }
 
         TypeElement fieldTypeElement = (TypeElement) type;
         return hasPersonalDataAnnotation(fieldTypeElement) || superClassIsPersonalData(fieldTypeElement);
     }
 
-    private boolean isFieldTypeEntity(Element field){
-        if(field == null){
+    private boolean isFieldTypeEntity(Element field) {
+        if (field == null) {
             return false;
         }
 
@@ -92,8 +96,8 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         return hasEntityAnnotation(fieldTypeElement) || superClassIsEntity(fieldTypeElement);
     }
 
-    private boolean superClassIsPersonalData(TypeElement ele){
-        if(ele == null){
+    private boolean superClassIsPersonalData(TypeElement ele) {
+        if (ele == null) {
             return false;
         }
 
@@ -107,8 +111,8 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         return hasPersonalDataAnnotation(superType) || superClassIsPersonalData(superType);
     }
 
-    private boolean superClassIsEntity(TypeElement ele){
-        if(ele == null){
+    private boolean superClassIsEntity(TypeElement ele) {
+        if (ele == null) {
             return false;
         }
 
@@ -121,17 +125,17 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         TypeElement superType = (TypeElement) type;
         return hasEntityAnnotation(superType) || superClassIsEntity(superType);
     }
-    
+
     @Override
     public SourceVersion getSupportedSourceVersion() {
-    	return SourceVersion.RELEASE_8;
-    }
-    
-    private static boolean hasPersonalDataAnnotation(Element field){
-    	return field != null && field.getAnnotation(PersonalData.class) != null;
+        return SourceVersion.RELEASE_8;
     }
 
-    private static boolean hasEntityAnnotation(Element field){
+    private static boolean hasPersonalDataAnnotation(Element field) {
+        return field != null && field.getAnnotation(PersonalData.class) != null;
+    }
+
+    private static boolean hasEntityAnnotation(Element field) {
         return field != null && field.getAnnotation(Document.class) != null;
     }
 
@@ -148,8 +152,9 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                 messager.printMessage(Kind.WARNING, "skip tests");
                 return;
             }
-            //messager.printMessage(Kind.WARNING, "start: " + taskEvt.getCompilationUnit().getSourceFile().getName());
+
             Set<String> topLevel = new HashSet<>();
+            Set<String> currentRoundResolved = new HashSet<>();
             taskEvt.getCompilationUnit().accept(new TreeScanner<Void, Void>() {
                 @Override
                 public Void visitMethod(MethodTree methodTree, Void aVoid) {
@@ -158,7 +163,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                     if (isApplicationEntryPoint(methodEle)) {
                         topLevel.add(name);
                     }
-                    parseDeps(methodEle, methodTree, methodDependencies);
+                    parseDeps(methodEle, methodTree, currentRoundResolved);
                     return super.visitMethod(methodTree, aVoid);
                 }
             }, null);
@@ -167,15 +172,39 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             String file = parts[parts.length - 1];
             String p = task.getCompilationUnit().getPackageName().toString();
 
-            if (topLevel.isEmpty()) {
-                return;
-            }
-            writeResults(p + "." + file, topLevel);
-        }
+            String name = p + "." + file;
 
+            if (!topLevel.isEmpty()) {
+                handleResults(name, topLevel, false);
+            }
+
+            Set<WaitList> toResolve = new HashSet<>();
+            Set<WaitList> toRemove = new HashSet<>();
+
+            for (String s : currentRoundResolved) {
+                for (WaitList wl : waitLists) {
+                    if (wl.waitingFor.contains(s)) {
+                        wl.waitingFor.remove(s);
+                        toResolve.add(wl);
+                        if (wl.waitingFor.isEmpty()) {
+                            toRemove.add(wl);
+                        }
+                    }
+                }
+            }
+
+            for (WaitList wl : toRemove) {
+                waitLists.remove(wl);
+            }
+
+            for (WaitList wl : toResolve) {
+                handleResults(wl.name, wl.entryPoints, true);
+            }
+
+        }
     }
 
-    private void parseDeps(Symbol.MethodSymbol methodEle, Tree methodTree, Map<String, Set<String>> methodDependencies) {
+    private void parseDeps(Symbol.MethodSymbol methodEle, Tree methodTree, Set<String> currentRound) {
         String name = getMethodName(methodEle);
         if (!methodDependencies.containsKey(name)) {
             final Set<String> deps = new HashSet<>();
@@ -188,7 +217,6 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                     deps.add(getMethodName(method));
                     return super.visitMethodInvocation(inv, aVoid);
                 }
-
             }, null);
             try {
                 methodTree.accept(new PersonalDataScanner(pd), null);
@@ -196,6 +224,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             } catch (Exception e) {
                 messager.printMessage(Kind.WARNING, "Error: " + e.getStackTrace()[0].getLineNumber());
             }
+            currentRound.add(name);
         }
     }
 
@@ -212,35 +241,54 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         return c + '#' + m + "(" + p + ")";
     }
 
-    private void writeResults(String name, Set<String> entrypoints) {
-	    try {
-            FileObject fo = processingEnv.getFiler().createResource(StandardLocation.SOURCE_OUTPUT, "pdtree", name + ".txt", null);
-            try (OutputStream os = fo.openOutputStream()) {
-                try (PrintWriter pw = new PrintWriter(os)) {
-                    for (String entrypoint : entrypoints) {
-                        Set<String> used = new HashSet<>();
-                        pw.println(entrypoint + " - " + getPersonalData(entrypoint));
-                        used.add(entrypoint);
-                        printTree(entrypoint, pw, 1, used);
-                    }
-                }
-            } catch (Exception e) {
-                messager.printMessage(Kind.ERROR, "Failed to write file: " + e.getMessage());
-            }
-        } catch (Exception e ){
+    private void handleResults(String name, Set<String> entrypoints, boolean retry) {
+        Set<String> waitingFor = new HashSet<>();
 
+        Path path = Paths.get("/home/pdtree/", name + ".txt");
+        //FileObject fo = processingEnv.getFiler().createResource(StandardLocation.SOURCE_OUTPUT, "pdtree", name + ".txt", null);
+        try (BufferedWriter writer = Files.newBufferedWriter(path)) {
+            try (PrintWriter pw = new PrintWriter(writer)) {
+                for (String entrypoint : entrypoints) {
+                    Set<String> used = new HashSet<>();
+                    pw.println(entrypoint + " - " + getPersonalData(entrypoint));
+                    used.add(entrypoint);
+                    printTree(entrypoint, pw, 1, used, waitingFor);
+                }
+            }
+        } catch (IOException e) {
+            messager.printMessage(Kind.ERROR, "Failed to write file: " + e.toString());
         }
-        messager.printMessage(Kind.WARNING, "Printed tree: " + entrypoints.size());
+        if (!waitingFor.isEmpty()) {
+            WaitList list = null;
+            for (WaitList wl : waitLists) {
+                if (wl.name.equals(name)) {
+                    list = wl;
+                }
+            }
+            if (list != null) {
+                list.waitingFor = waitingFor;
+            } else {
+                waitLists.add(new WaitList(name, entrypoints, waitingFor));
+            }
+        }
     }
 
-    private void printTree(String key, PrintWriter pw, int depth, Set<String> used) {
-	    String padding = "";
+    private void printTree(String key, PrintWriter pw, int depth, Set<String> used, Set<String> waitingFor) {
+        String padding = "";
         for (int i = 0; i < depth; i++) {
             padding += "    ";
         }
         if (!methodDependencies.containsKey(key)) {
-            pw.println(padding + "OutOfScope");
-            messager.printMessage(Kind.WARNING, "No deps: " + key);
+            String[] auw = taskEvt.getCompilationUnit().getPackageName().toString().split("\\.");
+            String underWork = auw.length > 4 ? String.join(".", auw[0], auw[1], auw[2], auw[3]) : "";
+            String[] ma = key.split("\\.");
+            String missing = ma.length > 4 ? String.join(".", ma[0], ma[1], ma[2], ma[3]) : "";
+            if (underWork.equals(missing)) {
+                waitingFor.add(key);
+                pw.println(padding + "Missing");
+            } else {
+                pw.println(padding + "OutOfScope");
+            }
             return;
         }
 
@@ -248,34 +296,35 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             pw.println(padding + d + " - " + getPersonalData(d));
             if (!used.contains(d)) {
                 used.add(d);
-                printTree(d, pw, depth + 1, used);
+                printTree(d, pw, depth + 1, used, waitingFor);
             }
         }
     }
 
     private String getPersonalData(String name) {
-        String pd = "[";
-        if (!methodPersonalData.containsKey(name)) {
-            messager.printMessage(Kind.WARNING, "No personal data info: " + name);
-        } else {
-            for (String a : methodPersonalData.get(name)) {
-                pd += a + ", ";
+        String pd = "";
+        if (methodPersonalData.containsKey(name)) {
+            Iterator<String> it = methodPersonalData.get(name).iterator();
+            while(it.hasNext()) {
+                pd += it.next();
+                if (it.hasNext()) {
+                    pd += ", ";
+                }
             }
         }
-        pd += "]";
-        return pd;
+        return "[" + pd + "]";
     }
 
-    private static Symbol treeToElement(Tree tree){
-	    if (tree == null) {
-	        return null;
+    private static Symbol treeToElement(Tree tree) {
+        if (tree == null) {
+            return null;
         }
         return TreeInfo.symbolFor((JCTree) tree);
     }
 
-	@Override
-	public void started(TaskEvent task) {
-	}
+    @Override
+    public void started(TaskEvent task) {
+    }
 
 
     private class PersonalDataScanner extends TreeScanner<Void, Void> {
@@ -299,7 +348,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         public Void visitParameterizedType(ParameterizedTypeTree parameterizedTypeTree, Void aVoid) {
             for (Tree typeArgument : parameterizedTypeTree.getTypeArguments()) {
                 Symbol argEle = treeToElement(typeArgument);
-                if (isDatabaseEntity(argEle)) {
+                if (isDatabaseEntity(argEle) && isPersonalData(argEle)) {
                     savePersonalData(argEle);
                 }
             }
@@ -312,7 +361,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             if (element == null) {
                 return null;
             }
-            if (isDatabaseEntity(element)) {
+            if (isDatabaseEntity(element) && isPersonalData(element)) {
                 savePersonalData(element);
             }
             return super.visitNewArray(newArrayTree, aVoid);
@@ -325,7 +374,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                 return null;
             }
             Symbol ide = treeToElement(newClassTree.getIdentifier());
-            if (isDatabaseEntity(ide)) {
+            if (isDatabaseEntity(ide) && isPersonalData(ide)) {
                 savePersonalData(ide);
             }
             return super.visitNewClass(newClassTree, aVoid);
@@ -344,7 +393,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                     case ARRAY: {
                         ArrayType at = (ArrayType) tp;
                         Element array = processingEnv.getTypeUtils().asElement(at.getComponentType());
-                        if (isDatabaseEntity(array)) {
+                        if (isDatabaseEntity(array) && isPersonalData(array)) {
                             savePersonalData(at.getComponentType());
                         }
                         break;
@@ -353,7 +402,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                         DeclaredType dt = (DeclaredType) tp;
                         for (TypeMirror mirror : dt.getTypeArguments()) {
                             Element argumentType = processingEnv.getTypeUtils().asElement(mirror);
-                            if (isDatabaseEntity(argumentType)) {
+                            if (isDatabaseEntity(argumentType) && isPersonalData(argumentType)) {
                                 savePersonalData(argumentType.asType());
                             }
                         }
@@ -372,10 +421,25 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                 return null;
             }
             Symbol ide = treeToElement(memberSelectTree.getExpression());
-            if (isDatabaseEntity(ide)) {
+            if (isDatabaseEntity(ide) && isPersonalData(ide)) {
                 savePersonalData(ide);
             }
             return super.visitMemberSelect(memberSelectTree, aVoid);
+        }
+    }
+
+    private class WaitList {
+
+        public Set<String> waitingFor;
+
+        public Set<String> entryPoints;
+
+        public final String name;
+
+        public WaitList(String name, Set<String> entryPoints, Set<String> waitingFor) {
+            this.name = name;
+            this.entryPoints = entryPoints;
+            this.waitingFor = waitingFor;
         }
     }
 }

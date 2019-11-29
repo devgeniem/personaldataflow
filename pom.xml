@@ -27,6 +27,16 @@
 	  <scope>system</scope>
 	  <systemPath>${JAVA_HOME}/lib/tools.jar</systemPath>
 	</dependency>
+    <dependency>
+      <groupId>org.springframework</groupId>
+      <artifactId>spring-web</artifactId>
+      <version>4.2.9.RELEASE</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.data</groupId>
+      <artifactId>spring-data-mongodb</artifactId>
+      <version>1.9.9.RELEASE</version>
+    </dependency>
   </dependencies>
     <build>
     <plugins>

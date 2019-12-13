@@ -241,6 +241,15 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             try {
                 methodTree.accept(new PersonalDataScanner(pd), null);
                 methodPersonalData.put(name, pd);
+                if (!interfaces.isEmpty()) {
+                    for (Type t : interfaces) {
+                        String iname = getMethodName(methodEle, t);
+                        if (!methodPersonalData.containsKey(iname)) {
+                            methodPersonalData.put(iname, new HashSet<>());
+                        }
+                        methodPersonalData.get(iname).addAll(pd);
+                    }
+                }
             } catch (Exception e) {
                 messager.printMessage(Kind.WARNING, "Error: " + e.getStackTrace()[0].getLineNumber());
             }

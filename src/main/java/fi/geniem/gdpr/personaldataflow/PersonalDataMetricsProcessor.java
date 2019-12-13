@@ -3,6 +3,7 @@ package fi.geniem.gdpr.personaldataflow;
 import com.sun.source.tree.*;
 import com.sun.source.util.*;
 import com.sun.tools.javac.code.Symbol;
+import com.sun.tools.javac.code.Type;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.tree.TreeInfo;
 import org.springframework.data.mongodb.core.mapping.Document;
@@ -37,6 +38,8 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
     private Messager messager;
 
     private Map<String, Set<String>> methodDependencies;
+    private Map<String, List<Set<String>>> interfaceImplementations;
+
     private Map<String, Set<String>> methodPersonalData;
 
     private Set<WaitList> waitLists;
@@ -50,6 +53,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         JavacTask.instance(processingEnv).setTaskListener(this);
         methodDependencies = new HashMap<>();
         methodPersonalData = new HashMap<>();
+        interfaceImplementations = new HashMap<>();
         waitLists = new HashSet<>();
     }
 
@@ -149,21 +153,26 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         this.taskEvt = task;
         if (taskEvt.getKind() == TaskEvent.Kind.ANALYZE) {
             if (taskEvt.getSourceFile().getName().endsWith("Test.java")) {
-                messager.printMessage(Kind.WARNING, "skip tests");
                 return;
             }
 
             Set<String> topLevel = new HashSet<>();
             Set<String> currentRoundResolved = new HashSet<>();
+            Set<Type> interfaces = new HashSet<>();
             taskEvt.getCompilationUnit().accept(new TreeScanner<Void, Void>() {
+
                 @Override
                 public Void visitMethod(MethodTree methodTree, Void aVoid) {
                     final Symbol.MethodSymbol methodEle = (Symbol.MethodSymbol) treeToElement(methodTree);
+
+                    Symbol.ClassSymbol owner = ((Symbol.ClassSymbol) methodEle.owner);
+                    interfaces.addAll(owner.getInterfaces());
+
                     String name = getMethodName(methodEle);
                     if (isApplicationEntryPoint(methodEle)) {
                         topLevel.add(name);
                     }
-                    parseDeps(methodEle, methodTree, currentRoundResolved);
+                    parseDeps(methodEle, methodTree, currentRoundResolved, interfaces);
                     return super.visitMethod(methodTree, aVoid);
                 }
             }, null);
@@ -204,12 +213,23 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         }
     }
 
-    private void parseDeps(Symbol.MethodSymbol methodEle, Tree methodTree, Set<String> currentRound) {
+    private void parseDeps(Symbol.MethodSymbol methodEle, Tree methodTree, Set<String> currentRound, Set<Type> interfaces) {
         String name = getMethodName(methodEle);
-        if (!methodDependencies.containsKey(name)) {
+        if (!methodDependencies.containsKey(name) && !methodEle.getModifiers().contains(Modifier.ABSTRACT)) {
             final Set<String> deps = new HashSet<>();
             final Set<String> pd = new HashSet<>();
             methodDependencies.put(name, deps);
+            if (!interfaces.isEmpty()) {
+                for (Type t : interfaces) {
+                    String iname = getMethodName(methodEle, t);
+                    if (!interfaceImplementations.containsKey(iname)) {
+                        interfaceImplementations.put(iname, new ArrayList<>());
+                    }
+                    interfaceImplementations.get(iname).add(deps);
+                    currentRound.add(iname);
+                }
+            }
+
             methodTree.accept(new TreeScanner<Void, Void>() {
                 @Override
                 public Void visitMethodInvocation(MethodInvocationTree inv, Void aVoid) {
@@ -241,11 +261,23 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         return c + '#' + m + "(" + p + ")";
     }
 
+    private String getMethodName(Symbol.MethodSymbol methodEle, Type in) {
+        String c = in.tsym.getQualifiedName().toString();
+        String m = methodEle.getQualifiedName().toString();
+        String p = "";
+        for (int i = 0; i < methodEle.getParameters().size(); i++) {
+            p += methodEle.getParameters().get(i).type;
+            if (i < methodEle.getParameters().size() - 1) {
+                p += ", ";
+            }
+        }
+        return c + '#' + m + "(" + p + ")";
+    }
+
     private void handleResults(String name, Set<String> entrypoints, boolean retry) {
         Set<String> waitingFor = new HashSet<>();
 
         Path path = Paths.get("/home/pdtree/", name + ".txt");
-        //FileObject fo = processingEnv.getFiler().createResource(StandardLocation.SOURCE_OUTPUT, "pdtree", name + ".txt", null);
         try (BufferedWriter writer = Files.newBufferedWriter(path)) {
             try (PrintWriter pw = new PrintWriter(writer)) {
                 for (String entrypoint : entrypoints) {
@@ -278,7 +310,38 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         for (int i = 0; i < depth; i++) {
             padding += "    ";
         }
-        if (!methodDependencies.containsKey(key)) {
+
+        if (interfaceImplementations.containsKey(key) && !interfaceImplementations.get(key).isEmpty()) {
+            if (interfaceImplementations.get(key).size() == 1) {
+                Set<String> impl = interfaceImplementations.get(key).get(0);
+                for (String d : impl) {
+                    pw.println(padding + d + " - " + getPersonalData(d));
+                    if (!used.contains(d)) {
+                        used.add(d);
+                        printTree(d, pw, depth + 1, used, waitingFor);
+                    }
+                }
+            } else {
+                for (Set<String> impl : interfaceImplementations.get(key)) {
+                    pw.println(padding + " ********** ALTERNATIVE IMPLEMENTATIONS ");
+                    for (String d : impl) {
+                        pw.println(padding + d + " - " + getPersonalData(d));
+                        if (!used.contains(d)) {
+                            used.add(d);
+                            printTree(d, pw, depth + 1, used, waitingFor);
+                        }
+                    }
+                }
+            }
+        } else if (methodDependencies.containsKey(key)) {
+            for (String d : methodDependencies.get(key)) {
+                pw.println(padding + d + " - " + getPersonalData(d));
+                if (!used.contains(d)) {
+                    used.add(d);
+                    printTree(d, pw, depth + 1, used, waitingFor);
+                }
+            }
+        }  else {
             String[] auw = taskEvt.getCompilationUnit().getPackageName().toString().split("\\.");
             String underWork = auw.length > 4 ? String.join(".", auw[0], auw[1], auw[2], auw[3]) : "";
             String[] ma = key.split("\\.");
@@ -288,15 +351,6 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                 pw.println(padding + "Missing");
             } else {
                 pw.println(padding + "OutOfScope");
-            }
-            return;
-        }
-
-        for (String d : methodDependencies.get(key)) {
-            pw.println(padding + d + " - " + getPersonalData(d));
-            if (!used.contains(d)) {
-                used.add(d);
-                printTree(d, pw, depth + 1, used, waitingFor);
             }
         }
     }

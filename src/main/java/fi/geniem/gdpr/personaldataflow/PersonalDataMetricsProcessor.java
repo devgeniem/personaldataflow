@@ -6,9 +6,9 @@ import com.sun.tools.javac.code.Symbol;
 import com.sun.tools.javac.code.Type;
 import com.sun.tools.javac.tree.JCTree;
 import com.sun.tools.javac.tree.TreeInfo;
+import javafx.util.Pair;
 import org.springframework.data.mongodb.core.mapping.Document;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.multipart.support.StandardServletMultipartResolver;
 
 import javax.annotation.processing.*;
 import javax.lang.model.SourceVersion;
@@ -19,15 +19,10 @@ import javax.lang.model.type.ArrayType;
 import javax.lang.model.type.DeclaredType;
 import javax.lang.model.type.TypeMirror;
 import javax.tools.Diagnostic.Kind;
-import javax.tools.FileObject;
-import javax.tools.StandardLocation;
-import javax.tools.ToolProvider;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.attribute.FileAttribute;
-import java.security.MessageDigest;
 import java.util.*;
 
 @SupportedAnnotationTypes({"*",})
@@ -41,7 +36,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
     private Map<String, List<Set<String>>> interfaceImplementations;
 
     private Map<String, Set<String>> methodPersonalData;
-
+    private Map<String, Set<Transfer>> methodDataRecipients;
     private Set<WaitList> waitLists;
 
 
@@ -53,6 +48,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         JavacTask.instance(processingEnv).setTaskListener(this);
         methodDependencies = new HashMap<>();
         methodPersonalData = new HashMap<>();
+        methodDataRecipients = new HashMap<>();
         interfaceImplementations = new HashMap<>();
         waitLists = new HashSet<>();
     }
@@ -177,11 +173,12 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                 }
             }, null);
 
-            String[] parts = task.getCompilationUnit().getSourceFile().getName().split("/");
+            String origFile = task.getCompilationUnit().getSourceFile().getName().replace('\\', '/');
+            String[] parts = origFile.split("/");
             String file = parts[parts.length - 1];
+            file = file.replaceFirst(".java", "");
             String p = task.getCompilationUnit().getPackageName().toString();
-
-            String name = p + "." + file;
+            String name =  p + "." + file;
 
             if (!topLevel.isEmpty()) {
                 handleResults(name, topLevel, false);
@@ -217,6 +214,7 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         String name = getMethodName(methodEle);
         if (!methodDependencies.containsKey(name) && !methodEle.getModifiers().contains(Modifier.ABSTRACT)) {
             final Set<String> deps = new HashSet<>();
+            final Set<Transfer> dr = new HashSet<>();
             final Set<String> pd = new HashSet<>();
             methodDependencies.put(name, deps);
             if (!interfaces.isEmpty()) {
@@ -239,8 +237,9 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                 }
             }, null);
             try {
-                methodTree.accept(new PersonalDataScanner(pd), null);
+                methodTree.accept(new PersonalDataScanner(pd, dr), null);
                 methodPersonalData.put(name, pd);
+                methodDataRecipients.put(name, dr);
                 if (!interfaces.isEmpty()) {
                     for (Type t : interfaces) {
                         String iname = getMethodName(methodEle, t);
@@ -248,6 +247,11 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
                             methodPersonalData.put(iname, new HashSet<>());
                         }
                         methodPersonalData.get(iname).addAll(pd);
+
+                        if (!methodDataRecipients.containsKey(iname)) {
+                            methodDataRecipients.put(iname, new HashSet<>());
+                        }
+                        methodDataRecipients.get(iname).addAll(dr);
                     }
                 }
             } catch (Exception e) {
@@ -286,15 +290,50 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
     private void handleResults(String name, Set<String> entrypoints, boolean retry) {
         Set<String> waitingFor = new HashSet<>();
 
-        Path path = Paths.get("/home/pdtree/", name + ".txt");
+        Set<String> controllerPersonalData = new HashSet<>();
+        Set<Transfer> controllerDataRecipients = new HashSet<>();
+        Path path = Paths.get("/home/pdtree/", name + ".json");
         try (BufferedWriter writer = Files.newBufferedWriter(path)) {
             try (PrintWriter pw = new PrintWriter(writer)) {
+                pw.println("{");
+                pw.println("    \"name\": \"" + name + "\",");
+                pw.println("    \"optOut\": false,");
+                pw.println("    \"required\": true,");
+                pw.println("    \"retention\": null,");
+                pw.println("    \"pm\": null,");
+                pw.println("    \"description\": \"\",");
+                pw.println("    \"purposes\": [");
+                int i = 0;
                 for (String entrypoint : entrypoints) {
                     Set<String> used = new HashSet<>();
-                    pw.println(entrypoint + " - " + getPersonalData(entrypoint));
+                    Set<Transfer> recipients = new HashSet<>();
+                    Set<String> personalData = new HashSet<>();
+                    personalData.addAll(getMethodPersonalData(entrypoint));
+                    recipients.addAll(getMethodDataRecipients(entrypoint));
                     used.add(entrypoint);
-                    printTree(entrypoint, pw, 1, used, waitingFor);
+                    Pair<Set<String>, Set<Transfer>> tree = readTree(entrypoint, used, waitingFor);
+                    personalData.addAll(tree.getKey());
+                    recipients.addAll(tree.getValue());
+
+                    pw.println("        {");
+                    pw.println("            \"name\": \"" + entrypoint + "\",");
+                    pw.println("            \"optOut\": false,");
+                    pw.println("            \"required\": true,");
+                    pw.println("            \"retention\": null,");
+                    pw.println("            \"description\": \"\",");
+                    pw.println("            \"pm\": null,");
+                    pw.println("            \"purposes\": [],");
+                    pw.println("            \"data\": " + formatArrayToJson(personalData) + ",");
+                    pw.println("            \"transfers\": " + formatTransferToJson(recipients));
+                    pw.println("        " + ((i == entrypoints.size() - 1) ? "}" : "},"));
+                    controllerPersonalData.addAll(personalData);
+                    controllerDataRecipients.addAll(recipients);
+                    i++;
                 }
+                pw.println("    ],");
+                pw.println("    \"data\": " + formatArrayToJson(controllerPersonalData) + ",");
+                pw.println("    \"transfers\": " + formatTransferToJson(controllerDataRecipients));
+                pw.println("}");
             }
         } catch (IOException e) {
             messager.printMessage(Kind.ERROR, "Failed to write file: " + e.toString());
@@ -314,40 +353,46 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
         }
     }
 
-    private void printTree(String key, PrintWriter pw, int depth, Set<String> used, Set<String> waitingFor) {
-        String padding = "";
-        for (int i = 0; i < depth; i++) {
-            padding += "    ";
-        }
+    private Pair<Set<String>, Set<Transfer>> readTree(String key, Set<String> used, Set<String> waitingFor) {
+        Set<String> personalData = new HashSet<>();
+        Set<Transfer> dataRecipients = new HashSet<>();
 
         if (interfaceImplementations.containsKey(key) && !interfaceImplementations.get(key).isEmpty()) {
             if (interfaceImplementations.get(key).size() == 1) {
                 Set<String> impl = interfaceImplementations.get(key).get(0);
                 for (String d : impl) {
-                    pw.println(padding + d + " - " + getPersonalData(d));
+                    personalData.addAll(getMethodPersonalData(d));
+                    dataRecipients.addAll(getMethodDataRecipients(d));
                     if (!used.contains(d)) {
                         used.add(d);
-                        printTree(d, pw, depth + 1, used, waitingFor);
+                        Pair<Set<String>, Set<Transfer>> tree = readTree(d, used, waitingFor);
+                        personalData.addAll(tree.getKey());
+                        dataRecipients.addAll(tree.getValue());
                     }
                 }
             } else {
                 for (Set<String> impl : interfaceImplementations.get(key)) {
-                    pw.println(padding + " ********** ALTERNATIVE IMPLEMENTATIONS ");
                     for (String d : impl) {
-                        pw.println(padding + d + " - " + getPersonalData(d));
+                        personalData.addAll(getMethodPersonalData(d));
+                        dataRecipients.addAll(getMethodDataRecipients(d));
                         if (!used.contains(d)) {
                             used.add(d);
-                            printTree(d, pw, depth + 1, used, waitingFor);
+                            Pair<Set<String>, Set<Transfer>> tree = readTree(d, used, waitingFor);
+                            personalData.addAll(tree.getKey());
+                            dataRecipients.addAll(tree.getValue());
                         }
                     }
                 }
             }
         } else if (methodDependencies.containsKey(key)) {
             for (String d : methodDependencies.get(key)) {
-                pw.println(padding + d + " - " + getPersonalData(d));
+                personalData.addAll(getMethodPersonalData(d));
+                dataRecipients.addAll(getMethodDataRecipients(d));
                 if (!used.contains(d)) {
                     used.add(d);
-                    printTree(d, pw, depth + 1, used, waitingFor);
+                    Pair<Set<String>, Set<Transfer>> tree = readTree(d, used, waitingFor);
+                    personalData.addAll(tree.getKey());
+                    dataRecipients.addAll(tree.getValue());
                 }
             }
         }  else {
@@ -357,25 +402,48 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             String missing = ma.length > 4 ? String.join(".", ma[0], ma[1], ma[2], ma[3]) : "";
             if (underWork.equals(missing)) {
                 waitingFor.add(key);
-                pw.println(padding + "Missing");
-            } else {
-                pw.println(padding + "OutOfScope");
             }
         }
+        return new Pair<>(personalData, dataRecipients);
     }
 
-    private String getPersonalData(String name) {
+    private String formatArrayToJson(Set<String> data) {
         String pd = "";
-        if (methodPersonalData.containsKey(name)) {
-            Iterator<String> it = methodPersonalData.get(name).iterator();
-            while(it.hasNext()) {
-                pd += it.next();
-                if (it.hasNext()) {
-                    pd += ", ";
-                }
+        Iterator<String> it = data.iterator();
+        while(it.hasNext()) {
+            pd += ("\"" + it.next() + "\"");
+            if (it.hasNext()) {
+                pd += ", ";
             }
         }
         return "[" + pd + "]";
+    }
+
+    private String formatTransferToJson(Set<Transfer> data) {
+        String pd = "";
+        Iterator<Transfer> it = data.iterator();
+        while(it.hasNext()) {
+            Transfer t = it.next();
+            pd += ("{\"recipientId\": \"" + t.recipientId + "\", \"policyURL\": \"" + t.policyURL + "\"}");
+            if (it.hasNext()) {
+                pd += ", ";
+            }
+        }
+        return "[" + pd + "]";
+    }
+
+    private Set<String> getMethodPersonalData(String name) {
+        if (methodPersonalData.containsKey(name)) {
+            return methodPersonalData.get(name);
+        }
+        return new HashSet<>();
+    }
+
+    private Set<Transfer> getMethodDataRecipients(String name) {
+        if (methodDataRecipients.containsKey(name)) {
+            return methodDataRecipients.get(name);
+        }
+        return new HashSet<>();
     }
 
     private static Symbol treeToElement(Tree tree) {
@@ -393,11 +461,12 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
     private class PersonalDataScanner extends TreeScanner<Void, Void> {
 
         private final Set<String> classes;
+        private final Set<Transfer> recipients;
 
-        public PersonalDataScanner(Set<String> classes) {
+        public PersonalDataScanner(Set<String> classes, Set<Transfer> recipients) {
             this.classes = classes;
+            this.recipients = recipients;
         }
-
 
         private void savePersonalData(Symbol ele) {
             classes.add(ele.type.toString());
@@ -489,6 +558,15 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             }
             return super.visitMemberSelect(memberSelectTree, aVoid);
         }
+
+        @Override
+        public Void visitMethodInvocation(MethodInvocationTree inv, Void aVoid) {
+            Symbol.MethodSymbol method = (Symbol.MethodSymbol) treeToElement(inv.getMethodSelect());
+            if (isTransfer(method)) {
+                recipients.add(new Transfer(method.getAnnotation(PersonalDataTransfer.class)));
+            }
+            return super.visitMethodInvocation(inv, aVoid);
+        }
     }
 
     private class WaitList {
@@ -503,6 +581,38 @@ public class PersonalDataMetricsProcessor extends AbstractProcessor implements T
             this.name = name;
             this.entryPoints = entryPoints;
             this.waitingFor = waitingFor;
+        }
+    }
+
+    private static boolean isTransfer(Element field){
+        return field != null && field.getAnnotation(PersonalDataTransfer.class) != null;
+    }
+
+    private class Transfer {
+
+        public final String policyURL;
+        public final String recipientId;
+
+        public Transfer(PersonalDataTransfer td) {
+            this.policyURL = td.policyURL();
+            this.recipientId = td.dataRecipientId();
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (!(obj instanceof Transfer)) {
+                return false;
+            }
+            Transfer o = (Transfer)obj;
+            return recipientId.equals(o.recipientId) && policyURL.equals(o.policyURL);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = 17;
+            result = 31 * result + recipientId.hashCode();
+            result = 31 * result + policyURL.hashCode();
+            return result;
         }
     }
 }

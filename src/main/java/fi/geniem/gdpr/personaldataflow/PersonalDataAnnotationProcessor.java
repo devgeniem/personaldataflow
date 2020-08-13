@@ -115,14 +115,14 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                     for (Tree typeArgument : parameterizedTypeTree.getTypeArguments()) {
                                         Symbol argEle = treeToElement(typeArgument);
                                         if (isPersonalData(argEle) && !isSafeContainer(classEle)) {
-                                            warn("Unsafe @PersonalData 1: " + argEle, typeArgument);
+                                            warn("Unsafe @PersonalData: " + argEle, typeArgument);
                                         }
                                     }
                                     return super.visitParameterizedType(parameterizedTypeTree, aVoid);
                                 }
                             }, null);
                             if(isPersonalData(element) && !isSafeContainer(classEle)){
-                                warn("Unsafe @PersonalData 2: " + element, variable);
+                                warn("Unsafe @PersonalData: " + element, variable);
                             }
                             return super.visitVariable(variable, v);
                         }
@@ -149,7 +149,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                         for(Tree typeArgument : parameterizedTypeTree.getTypeArguments()){
                                             Symbol argEle = treeToElement(typeArgument);
                                             if(isPersonalData(argEle) && !isSafeContainer(method) && !isEndpoint(method)) {
-                                                warn("Unsafe @PersonalData 3: " + argEle, typeArgument);
+                                                warn("Unsafe @PersonalData: " + argEle, typeArgument);
                                             }
                                         }
                                         return super.visitParameterizedType(parameterizedTypeTree, aVoid);
@@ -162,7 +162,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                             return null;
                                         }
                                         if(isPersonalData(element) && !isSafeContainer(method) && !isEndpoint(method)){
-                                            warn("Unsafe @PersonalData 4: " +element, newArrayTree);
+                                            warn("Unsafe @PersonalData: " +element, newArrayTree);
                                         }
                                         return super.visitNewArray(newArrayTree, aVoid);
                                     }
@@ -175,7 +175,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                         }
                                         Symbol ide = treeToElement(newClassTree.getIdentifier());
                                         if(isPersonalData(ide) && !isSafeContainer(method) && !isEndpoint(method)){
-                                            warn("Unsafe @PersonalData 5: " + ide, newClassTree);
+                                            warn("Unsafe @PersonalData: " + ide, newClassTree);
                                         }
                                         return super.visitNewClass(newClassTree, aVoid);
                                     }
@@ -194,7 +194,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                                     ArrayType at = (ArrayType) tp;
                                                     Element array = processingEnv.getTypeUtils().asElement(at.getComponentType());
                                                     if (isPersonalDataElement(array) && !isSafeContainer(method) && !isEndpoint(method)) {
-                                                        warn("Unsafe @PersonalData 6: " + argumentEle, identifierTree);
+                                                        warn("Unsafe @PersonalData: " + argumentEle, identifierTree);
                                                     }
                                                     break;
                                                 }
@@ -203,7 +203,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                                     for (TypeMirror mirror : dt.getTypeArguments()) {
                                                         Element argumentType = processingEnv.getTypeUtils().asElement(mirror);
                                                         if (isPersonalDataElement(argumentType) && !isSafeContainer(method) && !isEndpoint(method)) {
-                                                            warn("Unsafe @PersonalData 7: " + argumentEle, identifierTree);
+                                                            warn("Unsafe @PersonalData: " + argumentEle, identifierTree);
                                                         }
                                                     }
                                                 }
@@ -225,7 +225,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                                 && !isSafeContainer(method)
                                                 && !isEndpoint(method)
                                                 && !isSafeContainer(methodEle)){
-                                            warn("Unsafe @PersonalData 8: " + ide, memberSelectTree);
+                                            warn("Unsafe @PersonalData: " + ide, memberSelectTree);
                                         }
                                         return super.visitMemberSelect(memberSelectTree, aVoid);
                                     }
@@ -235,7 +235,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                 }
 
                                 if(isPersonalData(argumentEle) && !isSafeContainer(method) && !isEndpoint(method)){
-                                    warn("Unsafe @PersonalData 9!: " + argumentEle, argument);
+                                    warn("Unsafe @PersonalData: " + argumentEle, argument);
                                 }
                             }
                             return super.visitMethodInvocation(inv, aVoid);
@@ -246,7 +246,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                             for(Tree arg : parameterizedTypeTree.getTypeArguments()){
                                 Symbol argEle = treeToElement(arg);
                                 if(isPersonalData(argEle) && !isSafeContainer(methodEle)) {
-                                    warn("Unsafe @PersonalData 10: " + argEle, arg);
+                                    warn("Unsafe @PersonalData: " + argEle, arg);
                                 }
                             }
                             return super.visitParameterizedType(parameterizedTypeTree, aVoid);
@@ -259,7 +259,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                 return null;
                             }
                             if(isPersonalData(element) && !isSafeContainer(methodEle)){
-                                warn("Unsafe @PersonalData 11: " + element, newArrayTree);
+                                warn("Unsafe @PersonalData: " + element, newArrayTree);
                             }
                             return super.visitNewArray(newArrayTree, aVoid);
                         }
@@ -271,7 +271,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                 return null;
                             }
                             if(isPersonalData(element) && !isSafeContainer(methodEle)){
-                                warn("Unsafe @PersonalData 12: " + element, typeCastTree);
+                                warn("Unsafe @PersonalData: " + element, typeCastTree);
                             }
                             return super.visitTypeCast(typeCastTree, aVoid);
                         }
@@ -284,7 +284,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                             }
                             Symbol ide = treeToElement(newClassTree.getIdentifier());
                             if(isPersonalData(ide) && !isSafeContainer(methodEle)){
-                                warn("Unsafe @PersonalData 13: " + ide, newClassTree);
+                                warn("Unsafe @PersonalData: " + ide, newClassTree);
                             }
                             return super.visitNewClass(newClassTree, aVoid);
                         }
@@ -297,7 +297,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                 public Void visitArrayType(ArrayTypeTree arrayTypeTree, Void aVoid) {
                                     Symbol element = treeToElement(arrayTypeTree.getType());
                                     if(isPersonalData(element) && !isSafeContainer(methodEle)){
-                                        warn("Unsafe @PersonalData 14: " + element, arrayTypeTree);
+                                        warn("Unsafe @PersonalData: " + element, arrayTypeTree);
                                     }
                                     return super.visitArrayType(arrayTypeTree, aVoid);
                                 }
@@ -306,7 +306,7 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                                 return null;
                             }
                             if(isPersonalData(element) && !isSafeContainer(methodEle)){
-                                warn("Unsafe @PersonalData 15: " + variable, variable);
+                                warn("Unsafe @PersonalData: " + variable, variable);
                             }
                             return super.visitVariable(variable, v);
                         }
@@ -320,12 +320,12 @@ public class PersonalDataAnnotationProcessor extends AbstractProcessor implement
                             for (Tree b : typeParameterTree.getBounds()) {
                                 Symbol ide = treeToElement(b);
                                 if(isPersonalData(ide) && !isSafeContainer(methodEle)){
-                                    warn("Unsafe @PersonalData 16: " + ide, typeParameterTree);
+                                    warn("Unsafe @PersonalData: " + ide, typeParameterTree);
                                 }
                             }
                             Symbol ide = treeToElement(typeParameterTree);
                             if(isPersonalData(ide) && !isSafeContainer(methodEle)){
-                                warn("Unsafe @PersonalData 17: " + ide, typeParameterTree);
+                                warn("Unsafe @PersonalData: " + ide, typeParameterTree);
                             }
                             return super.visitTypeParameter(typeParameterTree, aVoid);
                         }
